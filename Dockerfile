@@ -1,27 +1,22 @@
-# jar 파일 빌드
-FROM eclipse-temurin:11 as builder
+FROM eclipse-temurin:11 as build
 
-COPY gradlew .
-COPY gradle gradle
-COPY build.gradle .
-COPY settings.gradle .
-COPY src src
-RUN chmod +x ./gradlew
-RUN ./gradlew bootjar
+# build
+WORKDIR /app
+COPY . /app
 
+RUN if [ -f "./gradlew" ]; then chmod +x ./gradlew; fi
+RUN --mount=type=cache,id=test-gradle,target=/root/.gradle ./gradlew clean bootjar -x test --build-cache -i -s --no-daemon
 
+# runner
+FROM eclipse-temurin:11-jre
 
-# jar 실행
-FROM eclipse-temurin:11 as runtime
+RUN set -o errexit -o nounset \
+  && groupadd --system --gid 1000 java \
+  && useradd --system --gid java --uid 1000 --shell /bin/bash --create-home java
 
-RUN addgroup --system --gid 1000 worker
-RUN adduser --system --uid 1000 --ingroup worker --disabled-password worker
-USER worker:worker
+WORKDIR /app
+COPY --from=build --chown=java:java /app/ .
 
-COPY --from=builder build/libs/*.jar app.jar
+USER java
 
-ENV PROFILE ${PROFILE}
-
-EXPOSE 8080
-
-ENTRYPOINT ["java", "-Dspring.profiles.active=${PROFILE}", "-jar", "/app.jar"]
+CMD java -jar -Dspring.profiles.active=${PROFILE:=prod} `find . -type f -name "*.jar" ! -path "*-plain.jar" ! -path "*-wrapper.jar" | head -1`
